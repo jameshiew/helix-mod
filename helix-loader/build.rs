@@ -5,6 +5,7 @@ use std::process::Command;
 const MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 const PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let git_hash = Command::new("git")
@@ -21,10 +22,12 @@ fn main() {
     } else {
         MINOR.to_string()
     };
+    let core_len = MAJOR.len() + MINOR.len() + PATCH.len() + 2;
+    let suffix = &VERSION[core_len..];
     let calver = if PATCH == "0" {
-        format!("{MAJOR}.{minor}")
+        format!("{MAJOR}.{minor}{suffix}")
     } else {
-        format!("{MAJOR}.{minor}.{PATCH}")
+        format!("{MAJOR}.{minor}.{PATCH}{suffix}")
     };
     let version: Cow<_> = match &git_hash {
         Some(git_hash) => format!("{} ({})", calver, &git_hash[..8]).into(),
