@@ -24,11 +24,12 @@ use crossterm::event::{Event, KeyEvent};
 use termina::event::{Event, KeyEvent};
 
 /// Specify how to set up the input text with line feeds
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum LineFeedHandling {
     /// Replaces all LF chars with the system's appropriate line feed character,
     /// and if one doesn't exist already, appends the system's appropriate line
     /// ending to the end of a string.
+    #[default]
     Native,
 
     /// Do not modify the input text in any way. What you give is what you test.
@@ -57,12 +58,6 @@ impl LineFeedHandling {
     }
 }
 
-impl Default for LineFeedHandling {
-    fn default() -> Self {
-        Self::Native
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct TestCase {
     pub in_text: String,
@@ -70,8 +65,6 @@ pub struct TestCase {
     pub in_keys: String,
     pub out_text: String,
     pub out_selection: Selection,
-
-    pub line_feed_handling: LineFeedHandling,
 }
 
 impl<S, R, V> From<(S, R, V)> for TestCase
@@ -101,7 +94,6 @@ where
             in_keys: keys.into(),
             out_text,
             out_selection,
-            line_feed_handling,
         }
     }
 }
