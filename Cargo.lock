@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "helix-lsp-types"
-version = "0.95.1"
+version = "0.95.1+mod"
 dependencies = [
  "bitflags",
  "helix-stdx",
