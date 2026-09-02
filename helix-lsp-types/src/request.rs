@@ -660,17 +660,6 @@ impl Request for PrepareRenameRequest {
     const METHOD: &'static str = "textDocument/prepareRename";
 }
 
-#[derive(Debug)]
-#[cfg(feature = "proposed")]
-pub enum InlineCompletionRequest {}
-
-#[cfg(feature = "proposed")]
-impl Request for InlineCompletionRequest {
-    type Params = InlineCompletionParams;
-    type Result = Option<InlineCompletionResponse>;
-    const METHOD: &'static str = "textDocument/inlineCompletion";
-}
-
 /// The workspace/workspaceFolders request is sent from the server to the client to fetch the current open list of
 /// workspace folders. Returns null in the response if only a single file is open in the tool.
 /// Returns an empty array if a workspace is open but no folders are configured.
@@ -1061,8 +1050,4 @@ mod test {
         check_macro!("typeHierarchy/supertypes");
         check_macro!("workspaceSymbol/resolve");
     }
-
-    #[test]
-    #[cfg(feature = "proposed")]
-    fn check_proposed_macro_definitions() {}
 }

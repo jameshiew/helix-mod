@@ -153,11 +153,6 @@ pub use inlay_hint::*;
 mod inline_value;
 pub use inline_value::*;
 
-#[cfg(feature = "proposed")]
-mod inline_completion;
-#[cfg(feature = "proposed")]
-pub use inline_completion::*;
-
 mod moniker;
 pub use moniker::*;
 
@@ -1597,13 +1592,6 @@ pub struct TextDocumentClientCapabilities {
     /// @since 3.17.0
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<DiagnosticClientCapabilities>,
-
-    /// Capabilities specific to the `textDocument/inlineCompletion` request.
-    ///
-    /// @since 3.18.0
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg(feature = "proposed")]
-    pub inline_completion: Option<InlineCompletionClientCapabilities>,
 }
 
 /// Where ClientCapabilities are currently empty:
@@ -1625,13 +1613,6 @@ pub struct ClientCapabilities {
     /// General client capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub general: Option<GeneralClientCapabilities>,
-
-    /// Unofficial UT8-offsets extension.
-    ///
-    /// See https://clangd.llvm.org/extensions.html#utf-8-offsets.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg(feature = "proposed")]
-    pub offset_encoding: Option<Vec<String>>,
 
     /// Experimental client capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1738,13 +1719,6 @@ pub struct InitializeResult {
     /// Information about the server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_info: Option<ServerInfo>,
-
-    /// Unofficial UT8-offsets extension.
-    ///
-    /// See https://clangd.llvm.org/extensions.html#utf-8-offsets.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg(feature = "proposed")]
-    pub offset_encoding: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
@@ -2061,13 +2035,6 @@ pub struct ServerCapabilities {
     /// @since 3.17.0
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostic_provider: Option<DiagnosticServerCapabilities>,
-
-    /// The server provides inline completions.
-    ///
-    /// @since 3.18.0
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg(feature = "proposed")]
-    pub inline_completion_provider: Option<OneOf<bool, InlineCompletionOptions>>,
 
     /// Experimental server capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
