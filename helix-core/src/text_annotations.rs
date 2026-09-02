@@ -261,8 +261,7 @@ impl<T: ?Sized> RawBox<T> {
 }
 impl<T: ?Sized> From<Box<T>> for RawBox<T> {
     fn from(box_: Box<T>) -> Self {
-        // obviously safe because Box::into_raw never returns null
-        unsafe { Self(NonNull::new_unchecked(Box::into_raw(box_))) }
+        Self(NonNull::from_mut(Box::leak(box_)))
     }
 }
 
