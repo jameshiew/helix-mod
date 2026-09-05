@@ -707,6 +707,120 @@ pub async fn to_writer<'a, W: tokio::io::AsyncWriteExt + Unpin + ?Sized>(
     Ok(())
 }
 
+/// How a save writes to disk. The strategy is chosen before any write, so a
+/// setup failure is reported instead of degrading to an in-place overwrite.
+enum SaveStrategy {
+    /// Overwrite the destination in place.
+    InPlace,
+    /// Write to a temporary file next to the destination, then rename it over
+    /// the destination.
+    Replace {
+        file: std::fs::File,
+        temp: tempfile::TempPath,
+    },
+    /// Copy the destination to a backup, then overwrite the destination in
+    /// place. Hardlinks and symlinks must keep their inode.
+    BackupCopy { backup: tempfile::TempPath },
+}
+
+impl SaveStrategy {
+    fn prepare(path: &Path, must_copy: bool) -> io::Result<Self> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::other("path has no parent directory"))?;
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| io::Error::other("path has no file name"))?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(file_name);
+
+        if must_copy {
+            let backup = builder
+                .suffix(".bck")
+                .make_in(parent, |backup| {
+                    std::fs::copy(path, backup)?;
+                    sync_file(&std::fs::File::open(backup)?)
+                })?
+                .into_temp_path();
+            sync_dir(parent);
+            Ok(Self::BackupCopy { backup })
+        } else {
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::metadata(path)?.permissions().mode() & 0o777
+            };
+            let (file, temp) = builder
+                .suffix(".tmp")
+                .make_in(parent, |temp| {
+                    let mut options = std::fs::OpenOptions::new();
+                    options.write(true).create_new(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        options.mode(mode);
+                    }
+                    options.open(temp)
+                })?
+                .into_parts();
+            Ok(Self::Replace { file, temp })
+        }
+    }
+}
+
+async fn write_in_place(
+    path: &Path,
+    encoding_with_bom_info: (&'static Encoding, bool),
+    text: &Rope,
+) -> anyhow::Result<()> {
+    let dst = tokio::fs::File::create(path).await?;
+    write_and_sync(dst, encoding_with_bom_info, text).await
+}
+
+async fn write_and_sync(
+    mut dst: tokio::fs::File,
+    encoding_with_bom_info: (&'static Encoding, bool),
+    text: &Rope,
+) -> anyhow::Result<()> {
+    to_writer(&mut dst, encoding_with_bom_info, text).await?;
+    match dst.sync_all().await {
+        Err(err) if !sync_unsupported(&err) => Err(err.into()),
+        _ => Ok(()),
+    }
+}
+
+fn sync_file(file: &std::fs::File) -> io::Result<()> {
+    match file.sync_all() {
+        Err(err) if !sync_unsupported(&err) => Err(err),
+        _ => Ok(()),
+    }
+}
+
+/// Returns true if `err` means the filesystem does not support fsync. SMB
+/// mounts on macOS return this error. It is safe to ignore.
+fn sync_unsupported(err: &io::Error) -> bool {
+    // ENOTSUP and EOPNOTSUPP are the same code on Linux, so one alternative
+    // is unreachable there.
+    #[cfg(unix)]
+    #[allow(unreachable_patterns)]
+    let os_unsupported = matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EOPNOTSUPP));
+    #[cfg(not(unix))]
+    let os_unsupported = false;
+    err.kind() == io::ErrorKind::Unsupported || os_unsupported
+}
+
+/// Makes directory entry changes durable. An fsync of a file does not cover
+/// the directory entry that names it.
+#[cfg(unix)]
+fn sync_dir(path: &Path) {
+    if let Err(err) = std::fs::File::open(path).and_then(|dir| sync_file(&dir)) {
+        log::warn!("Failed to sync directory {}: {err}", path.display());
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_path: &Path) {}
+
 fn take_with<T, F>(mut_ref: &mut T, f: F)
 where
     T: Default,
@@ -1084,99 +1198,74 @@ impl Document {
                 Err(err) => return Err(err.into()),
             };
             let must_copy = is_hardlink || is_symlink;
-            let backup = if path.exists() && atomic_save {
+            let strategy = if path.exists() && atomic_save {
                 let path_ = write_path.clone();
-                // hacks: we use tempfile to handle the complex task of creating
-                // non clobbered temporary path for us we don't want
-                // the whole automatically delete path on drop thing
-                // since the path doesn't exist yet, we just want
-                // the path
-                tokio::task::spawn_blocking(move || -> Option<PathBuf> {
-                    let mut builder = tempfile::Builder::new();
-                    builder.prefix(path_.file_name()?).suffix(".bck");
-
-                    let backup_path = if must_copy {
-                        builder
-                            .make_in(path_.parent()?, |backup| std::fs::copy(&path_, backup))
-                            .ok()?
-                            .into_temp_path()
-                    } else {
-                        builder
-                            .make_in(path_.parent()?, |backup| std::fs::rename(&path_, backup))
-                            .ok()?
-                            .into_temp_path()
-                    };
-
-                    backup_path.keep().ok()
-                })
-                .await
-                .ok()
-                .flatten()
+                let prepared =
+                    tokio::task::spawn_blocking(move || SaveStrategy::prepare(&path_, must_copy))
+                        .await
+                        .map_err(io::Error::other)
+                        .and_then(|prepared| prepared);
+                match prepared {
+                    Ok(strategy) => strategy,
+                    Err(err) if force => {
+                        log::warn!(
+                            "atomic save unavailable for {}, overwriting in place: {err}",
+                            write_path.display()
+                        );
+                        SaveStrategy::InPlace
+                    }
+                    Err(err) => bail!(
+                        "can't save atomically: {err}, use :w! to overwrite in place or disable atomic-save"
+                    ),
+                }
             } else {
-                None
+                SaveStrategy::InPlace
             };
 
-            let write_result: anyhow::Result<_> = async {
-                let mut dst = tokio::fs::File::create(&write_path).await?;
-                to_writer(&mut dst, encoding_with_bom_info, &text).await?;
-                // Ignore ENOTSUP/EOPNOTSUPP (Operation not supported) errors from sync_all()
-                // This is known to occur on SMB filesystems on macOS where fsync is not supported
-                match dst.sync_all().await {
-                    Ok(_) => (),
-                    Err(err) if err.kind() == io::ErrorKind::Unsupported => (),
-                    // Some extra OS errors are thrown on macOS for example if fsync is not
-                    // available for this filesystem. NOTE: on macOS, ENOTSUP and EOPNOTSUPP are
-                    // not the same code, so we need to suppress the unreachable_patterns lint on
-                    // Unix generally.
-                    #[allow(unreachable_patterns)]
-                    #[cfg(unix)]
-                    Err(err)
-                        if matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EOPNOTSUPP)) => {
-                    }
-                    Err(err) => return Err(err.into()),
+            let write_result: anyhow::Result<()> = match strategy {
+                SaveStrategy::InPlace => {
+                    write_in_place(&write_path, encoding_with_bom_info, &text).await
                 }
-                Ok(())
-            }
-            .await;
+                SaveStrategy::Replace { file, temp } => {
+                    async {
+                        write_and_sync(fs::File::from_std(file), encoding_with_bom_info, &text)
+                            .await?;
+                        let write_path = write_path.clone();
+                        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                            let _ = copy_metadata(&write_path, &temp)
+                                .map_err(|e| log::error!("Failed to copy metadata on write: {e}"));
+                            temp.persist(&write_path).map_err(io::Error::from)?;
+                            if let Some(parent) = write_path.parent() {
+                                sync_dir(parent);
+                            }
+                            Ok(())
+                        })
+                        .await?
+                    }
+                    .await
+                }
+                SaveStrategy::BackupCopy { backup } => {
+                    let result = write_in_place(&write_path, encoding_with_bom_info, &text).await;
+                    let mut delete = true;
+                    if result.is_err() {
+                        if let Err(e) = fs::copy(&backup, &write_path).await {
+                            delete = false;
+                            log::error!("Failed to restore backup on write failure: {e}");
+                        }
+                    }
+                    if delete {
+                        let _ = tokio::task::spawn_blocking(move || drop(backup)).await;
+                    } else if let Ok(kept) = backup.keep() {
+                        log::error!("Backup of the original file kept at {}", kept.display());
+                    }
+                    result
+                }
+            };
 
             let save_time = match fs::metadata(&write_path).await {
                 Ok(metadata) => metadata.modified().unwrap_or(SystemTime::now()),
                 Err(_) => SystemTime::now(),
             };
-
-            if let Some(backup) = backup {
-                if must_copy {
-                    let mut delete = true;
-                    if write_result.is_err() {
-                        // Restore backup
-                        let _ = tokio::fs::copy(&backup, &write_path).await.map_err(|e| {
-                            delete = false;
-                            log::error!("Failed to restore backup on write failure: {e}")
-                        });
-                    }
-
-                    if delete {
-                        // Delete backup
-                        let _ = tokio::fs::remove_file(backup)
-                            .await
-                            .map_err(|e| log::error!("Failed to remove backup file on write: {e}"));
-                    }
-                } else if write_result.is_err() {
-                    // restore backup
-                    let _ = tokio::fs::rename(&backup, &write_path)
-                        .await
-                        .map_err(|e| log::error!("Failed to restore backup on write failure: {e}"));
-                } else {
-                    // copy metadata and delete backup
-                    let _ = tokio::task::spawn_blocking(move || {
-                        let _ = copy_metadata(&backup, &write_path)
-                            .map_err(|e| log::error!("Failed to copy metadata on write: {e}"));
-                        let _ = std::fs::remove_file(backup)
-                            .map_err(|e| log::error!("Failed to remove backup file on write: {e}"));
-                    })
-                    .await;
-                }
-            }
 
             write_result?;
 

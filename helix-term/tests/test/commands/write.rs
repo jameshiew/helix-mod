@@ -1039,3 +1039,82 @@ async fn test_write_then_open_does_not_panic_on_closed_scratch() -> anyhow::Resu
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_leaves_no_temporary_files() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+
+    let mut app = helpers::AppBuilder::new()
+        .with_file(file.path(), None)
+        .build()?;
+
+    test_key_sequence(&mut app, Some("ihello<esc>:w<ret>"), None, false).await?;
+
+    reload_file(&mut file).unwrap();
+    let mut file_content = String::new();
+    file.as_file_mut().read_to_string(&mut file_content)?;
+    assert_eq!(LineFeedHandling::Native.apply("hello"), file_content);
+
+    let entries: Vec<_> = std::fs::read_dir(dir.path())?.collect::<Result<_, _>>()?;
+    assert_eq!(1, entries.len(), "files left behind: {entries:?}");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_fails_with_hint_when_atomic_save_is_impossible() -> anyhow::Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct RestorePermissions<'a>(&'a std::path::Path);
+    impl Drop for RestorePermissions<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, Permissions::from_mode(0o755));
+        }
+    }
+
+    let dir = tempfile::tempdir()?;
+    let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+    std::fs::set_permissions(dir.path(), Permissions::from_mode(0o555))?;
+    let _restore = RestorePermissions(dir.path());
+    if std::fs::File::create(dir.path().join("probe")).is_ok() {
+        // Root ignores directory permissions, so the failure cannot occur.
+        return Ok(());
+    }
+
+    let mut app = helpers::AppBuilder::new()
+        .with_file(file.path(), None)
+        .build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("ihello<esc>:w<ret>"),
+                Some(&|app| {
+                    let (message, severity) = app.editor.get_status().unwrap();
+                    assert_eq!(&Severity::Error, severity);
+                    assert!(message.contains(":w!"), "{message}");
+                    assert!(doc!(app.editor).is_modified());
+                }),
+            ),
+            (
+                Some(":w!<ret>"),
+                Some(&|app| {
+                    assert!(!doc!(app.editor).is_modified());
+                }),
+            ),
+        ],
+        false,
+    )
+    .await?;
+
+    reload_file(&mut file).unwrap();
+    let mut file_content = String::new();
+    file.as_file_mut().read_to_string(&mut file_content)?;
+    assert_eq!(LineFeedHandling::Native.apply("hello"), file_content);
+
+    Ok(())
+}

@@ -3158,7 +3158,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
     TypableCommand {
         name: "write!",
         aliases: &["w!"],
-        doc: "Force write changes to disk creating necessary subdirectories. Accepts an optional path (:write! some/path.txt)",
+        doc: "Force write changes to disk, creating necessary subdirectories and overwriting in place if an atomic save is not possible. Accepts an optional path (:write! some/path.txt)",
         fun: force_write,
         completer: CommandCompleter::positional(&[completers::filename]),
         signature: Signature {
