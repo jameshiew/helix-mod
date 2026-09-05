@@ -737,11 +737,9 @@ impl SaveStrategy {
         if must_copy {
             let backup = builder
                 .suffix(".bck")
-                .make_in(parent, |backup| {
-                    std::fs::copy(path, backup)?;
-                    sync_file(&std::fs::File::open(backup)?)
-                })?
+                .make_in(parent, |backup| std::fs::copy(path, backup))?
                 .into_temp_path();
+            sync_file(&open_for_sync(&backup)?)?;
             sync_dir(parent);
             Ok(Self::BackupCopy { backup })
         } else {
@@ -787,6 +785,15 @@ async fn write_and_sync(
         Err(err) if !sync_unsupported(&err) => Err(err.into()),
         _ => Ok(()),
     }
+}
+
+/// Opens `path` with the access that `sync_all` needs. On Windows,
+/// `FlushFileBuffers` requires a handle with write access.
+fn open_for_sync(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(cfg!(windows))
+        .open(path)
 }
 
 fn sync_file(file: &std::fs::File) -> io::Result<()> {
