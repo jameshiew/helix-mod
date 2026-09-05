@@ -807,6 +807,11 @@ async fn save_atomically(
             .map_err(AtomicSaveError::Unavailable)
         }
         AtomicSave::BackupCopy { backup } => {
+            // A cancelled save must leave the backup on disk, so it is no
+            // longer removed on drop from here on.
+            let backup = backup
+                .keep()
+                .map_err(|err| AtomicSaveError::Unavailable(err.into()))?;
             let result = write_in_place(write_path, encoding_with_bom_info, text).await;
             let mut delete = true;
             if result.is_err() {
@@ -816,9 +821,11 @@ async fn save_atomically(
                 }
             }
             if delete {
-                let _ = tokio::task::spawn_blocking(move || drop(backup)).await;
-            } else if let Ok(kept) = backup.keep() {
-                log::error!("Backup of the original file kept at {}", kept.display());
+                let _ = tokio::fs::remove_file(&backup)
+                    .await
+                    .map_err(|e| log::error!("Failed to remove backup file on write: {e}"));
+            } else {
+                log::error!("Backup of the original file kept at {}", backup.display());
             }
             result.map_err(AtomicSaveError::Failed)
         }
@@ -2641,6 +2648,40 @@ impl Display for FormatterError {
 
 #[cfg(test)]
 mod test {
+    #[tokio::test]
+    async fn cancelled_backup_copy_save_keeps_the_backup() {
+        use futures_util::poll;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        let original = "old\n".repeat(1 << 20);
+        std::fs::write(&path, &original).unwrap();
+        std::fs::hard_link(&path, dir.path().join("link")).unwrap();
+        let text = Rope::from("new content\n".repeat(1 << 20));
+
+        let mut save = Box::pin(save_atomically(
+            &path,
+            true,
+            (encoding::UTF_8, false),
+            &text,
+        ));
+        while std::fs::metadata(&path).unwrap().len() == original.len() as u64 {
+            assert!(
+                poll!(&mut save).is_pending(),
+                "save completed before it could be cancelled"
+            );
+            tokio::task::yield_now().await;
+        }
+        drop(save);
+
+        let backup = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|entry| entry.extension().is_some_and(|ext| ext == "bck"))
+            .expect("backup was deleted");
+        assert_eq!(original, std::fs::read_to_string(backup).unwrap());
+    }
+
     use arc_swap::ArcSwap;
 
     use super::*;
