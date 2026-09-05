@@ -1118,3 +1118,73 @@ async fn test_write_fails_with_hint_when_atomic_save_is_impossible() -> anyhow::
 
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_falls_back_to_in_place_when_rename_is_denied() -> anyhow::Result<()> {
+    use std::process::Command;
+
+    struct RemoveAcl(std::path::PathBuf);
+    impl Drop for RemoveAcl {
+        fn drop(&mut self) {
+            let _ = Command::new("chmod").arg("-N").arg(&self.0).status();
+        }
+    }
+
+    let dir = tempfile::tempdir()?;
+    let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+    let user = String::from_utf8(Command::new("id").arg("-un").output()?.stdout)?;
+    let acl = format!("user:{} deny delete", user.trim());
+    let status = Command::new("chmod")
+        .arg("+a")
+        .arg(&acl)
+        .arg(file.path())
+        .status()?;
+    anyhow::ensure!(status.success(), "chmod +a failed");
+    let _remove_acl = RemoveAcl(file.path().to_path_buf());
+
+    let other = dir.path().join("other");
+    std::fs::write(&other, "other")?;
+    if std::fs::rename(&other, file.path()).is_ok() {
+        // The ACL is not enforced here, so the failure cannot occur.
+        return Ok(());
+    }
+    std::fs::remove_file(&other)?;
+
+    let mut app = helpers::AppBuilder::new()
+        .with_file(file.path(), None)
+        .build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("ihello<esc>:w<ret>"),
+                Some(&|app| {
+                    let (message, severity) = app.editor.get_status().unwrap();
+                    assert_eq!(&Severity::Error, severity);
+                    assert!(message.contains(":w!"), "{message}");
+                    assert!(doc!(app.editor).is_modified());
+                }),
+            ),
+            (
+                Some(":w!<ret>"),
+                Some(&|app| {
+                    assert!(!doc!(app.editor).is_modified());
+                }),
+            ),
+        ],
+        false,
+    )
+    .await?;
+
+    reload_file(&mut file).unwrap();
+    let mut file_content = String::new();
+    file.as_file_mut().read_to_string(&mut file_content)?;
+    assert_eq!(LineFeedHandling::Native.apply("hello"), file_content);
+
+    let entries: Vec<_> = std::fs::read_dir(dir.path())?.collect::<Result<_, _>>()?;
+    assert_eq!(1, entries.len(), "files left behind: {entries:?}");
+
+    Ok(())
+}

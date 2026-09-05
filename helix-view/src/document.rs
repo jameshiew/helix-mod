@@ -707,11 +707,8 @@ pub async fn to_writer<'a, W: tokio::io::AsyncWriteExt + Unpin + ?Sized>(
     Ok(())
 }
 
-/// How a save writes to disk. The strategy is chosen before any write, so a
-/// setup failure is reported instead of degrading to an in-place overwrite.
-enum SaveStrategy {
-    /// Overwrite the destination in place.
-    InPlace,
+/// A save that never leaves the destination in a partial state.
+enum AtomicSave {
     /// Write to a temporary file next to the destination, then rename it over
     /// the destination.
     Replace {
@@ -723,7 +720,15 @@ enum SaveStrategy {
     BackupCopy { backup: tempfile::TempPath },
 }
 
-impl SaveStrategy {
+enum AtomicSaveError {
+    /// The destination cannot be saved atomically and is unchanged. An
+    /// in-place overwrite may still work.
+    Unavailable(io::Error),
+    /// The write failed.
+    Failed(anyhow::Error),
+}
+
+impl AtomicSave {
     fn prepare(path: &Path, must_copy: bool) -> io::Result<Self> {
         let parent = path
             .parent()
@@ -762,6 +767,60 @@ impl SaveStrategy {
                 })?
                 .into_parts();
             Ok(Self::Replace { file, temp })
+        }
+    }
+}
+
+async fn save_atomically(
+    write_path: &Path,
+    must_copy: bool,
+    encoding_with_bom_info: (&'static Encoding, bool),
+    text: &Rope,
+) -> Result<(), AtomicSaveError> {
+    let path = write_path.to_path_buf();
+    let prepared = tokio::task::spawn_blocking(move || AtomicSave::prepare(&path, must_copy))
+        .await
+        .map_err(|err| AtomicSaveError::Failed(err.into()))?
+        .map_err(AtomicSaveError::Unavailable)?;
+
+    match prepared {
+        AtomicSave::Replace { file, temp } => {
+            write_and_sync(
+                tokio::fs::File::from_std(file),
+                encoding_with_bom_info,
+                text,
+            )
+            .await
+            .map_err(AtomicSaveError::Failed)?;
+            let path = write_path.to_path_buf();
+            tokio::task::spawn_blocking(move || -> io::Result<()> {
+                let _ = copy_metadata(&path, &temp)
+                    .map_err(|e| log::error!("Failed to copy metadata on write: {e}"));
+                temp.persist(&path).map_err(io::Error::from)?;
+                if let Some(parent) = path.parent() {
+                    sync_dir(parent);
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|err| AtomicSaveError::Failed(err.into()))?
+            .map_err(AtomicSaveError::Unavailable)
+        }
+        AtomicSave::BackupCopy { backup } => {
+            let result = write_in_place(write_path, encoding_with_bom_info, text).await;
+            let mut delete = true;
+            if result.is_err() {
+                if let Err(e) = tokio::fs::copy(&backup, write_path).await {
+                    delete = false;
+                    log::error!("Failed to restore backup on write failure: {e}");
+                }
+            }
+            if delete {
+                let _ = tokio::task::spawn_blocking(move || drop(backup)).await;
+            } else if let Ok(kept) = backup.keep() {
+                log::error!("Backup of the original file kept at {}", kept.display());
+            }
+            result.map_err(AtomicSaveError::Failed)
         }
     }
 }
@@ -1205,68 +1264,23 @@ impl Document {
                 Err(err) => return Err(err.into()),
             };
             let must_copy = is_hardlink || is_symlink;
-            let strategy = if path.exists() && atomic_save {
-                let path_ = write_path.clone();
-                let prepared =
-                    tokio::task::spawn_blocking(move || SaveStrategy::prepare(&path_, must_copy))
-                        .await
-                        .map_err(io::Error::other)
-                        .and_then(|prepared| prepared);
-                match prepared {
-                    Ok(strategy) => strategy,
-                    Err(err) if force => {
+            let write_result: anyhow::Result<()> = if path.exists() && atomic_save {
+                match save_atomically(&write_path, must_copy, encoding_with_bom_info, &text).await {
+                    Ok(()) => Ok(()),
+                    Err(AtomicSaveError::Failed(err)) => Err(err),
+                    Err(AtomicSaveError::Unavailable(err)) if force => {
                         log::warn!(
                             "atomic save unavailable for {}, overwriting in place: {err}",
                             write_path.display()
                         );
-                        SaveStrategy::InPlace
+                        write_in_place(&write_path, encoding_with_bom_info, &text).await
                     }
-                    Err(err) => bail!(
+                    Err(AtomicSaveError::Unavailable(err)) => Err(anyhow!(
                         "can't save atomically: {err}, use :w! to overwrite in place or disable atomic-save"
-                    ),
+                    )),
                 }
             } else {
-                SaveStrategy::InPlace
-            };
-
-            let write_result: anyhow::Result<()> = match strategy {
-                SaveStrategy::InPlace => {
-                    write_in_place(&write_path, encoding_with_bom_info, &text).await
-                }
-                SaveStrategy::Replace { file, temp } => {
-                    async {
-                        write_and_sync(fs::File::from_std(file), encoding_with_bom_info, &text)
-                            .await?;
-                        let write_path = write_path.clone();
-                        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                            let _ = copy_metadata(&write_path, &temp)
-                                .map_err(|e| log::error!("Failed to copy metadata on write: {e}"));
-                            temp.persist(&write_path).map_err(io::Error::from)?;
-                            if let Some(parent) = write_path.parent() {
-                                sync_dir(parent);
-                            }
-                            Ok(())
-                        })
-                        .await?
-                    }
-                    .await
-                }
-                SaveStrategy::BackupCopy { backup } => {
-                    let result = write_in_place(&write_path, encoding_with_bom_info, &text).await;
-                    let mut delete = true;
-                    if result.is_err() {
-                        if let Err(e) = fs::copy(&backup, &write_path).await {
-                            delete = false;
-                            log::error!("Failed to restore backup on write failure: {e}");
-                        }
-                    }
-                    if delete {
-                        let _ = tokio::task::spawn_blocking(move || drop(backup)).await;
-                    } else if let Ok(kept) = backup.keep() {
-                        log::error!("Backup of the original file kept at {}", kept.display());
-                    }
-                    result
-                }
+                write_in_place(&write_path, encoding_with_bom_info, &text).await
             };
 
             let save_time = match fs::metadata(&write_path).await {

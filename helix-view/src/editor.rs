@@ -398,9 +398,9 @@ pub struct Config {
     pub insert_final_newline: bool,
     /// Whether to write documents to a temporary file and rename it over the destination, so the
     /// file on disk is always either the old or the new version. Hardlinks and symlinks are backed
-    /// up and overwritten in place to keep their inode. If the temporary file cannot be created,
-    /// the save fails and `:w!` overwrites in place. May confuse some file watching/hot reloading
-    /// programs. Defaults to `true`.
+    /// up and overwritten in place to keep their inode. If an atomic save is not possible, the save
+    /// fails and `:w!` overwrites in place. May confuse some file watching/hot reloading programs.
+    /// Defaults to `true`.
     pub atomic_save: bool,
     /// Whether to automatically remove all trailing line-endings after the final one on write.
     /// Defaults to `false`.
