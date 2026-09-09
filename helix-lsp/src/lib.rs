@@ -34,6 +34,17 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 pub type LanguageServerName = String;
 pub use helix_core::diagnostic::LanguageServerId;
 
+/// Prefix of the `log` target under which everything about a single language
+/// server is logged: its traffic, its stderr and errors handling it. The rest
+/// of the target is the server's name, so a logger can give each server its
+/// own log file.
+pub const LOG_TARGET_PREFIX: &str = "lsp/";
+
+/// The `log` target for records about the language server `name`.
+pub fn log_target(name: &str) -> String {
+    format!("{LOG_TARGET_PREFIX}{name}")
+}
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("protocol error: {0}")]
@@ -955,7 +966,10 @@ fn start_client(
             .await;
 
         if let Err(e) = value {
-            log::error!("failed to initialize language server: {}", e);
+            log::error!(
+                "failed to initialize language server {:?}: {e}",
+                _client.name()
+            );
             return;
         }
 

@@ -2579,12 +2579,24 @@ fn open_workspace_config(
     Ok(())
 }
 
-fn open_log(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+fn open_log(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
     }
 
-    cx.editor.open(&helix_loader::log_file(), Action::Replace)?;
+    let path = match args.first() {
+        Some(name) => {
+            let path = crate::logging::lsp_log_file(name);
+            ensure!(
+                path.exists(),
+                "language server {name:?} has no log file at {}",
+                path.display()
+            );
+            path
+        }
+        None => helix_loader::log_file(),
+    };
+    cx.editor.open(&path, Action::Replace)?;
     Ok(())
 }
 
@@ -3926,11 +3938,11 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
     TypableCommand {
         name: "log-open",
         aliases: &[],
-        doc: "Open the helix log file.",
+        doc: "Open the helix log file, or the log file of the given language server.",
         fun: open_log,
-        completer: CommandCompleter::none(),
+        completer: CommandCompleter::positional(&[completers::configured_language_servers]),
         signature: Signature {
-            positionals: (0, Some(0)),
+            positionals: (0, Some(1)),
             ..Signature::DEFAULT
         },
     },

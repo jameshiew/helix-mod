@@ -854,7 +854,19 @@ impl Application {
                         self.handle_show_message(params.typ, params.message);
                     }
                     Notification::LogMessage(params) => {
-                        log::info!("window/logMessage: {:?}", params);
+                        let language_server = language_server!();
+                        let level = match params.typ {
+                            lsp::MessageType::ERROR => log::Level::Error,
+                            lsp::MessageType::WARNING => log::Level::Warn,
+                            lsp::MessageType::INFO => log::Level::Info,
+                            _ => log::Level::Debug,
+                        };
+                        log::log!(
+                            target: language_server.log_target(),
+                            level,
+                            "window/logMessage: {}",
+                            params.message
+                        );
                     }
                     Notification::ProgressMessage(params)
                         if !self

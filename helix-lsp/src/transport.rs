@@ -4,7 +4,7 @@ use crate::{
     Error, LanguageServerId, Result,
 };
 use anyhow::Context;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -43,7 +43,8 @@ enum ServerMessage {
 #[derive(Debug)]
 pub struct Transport {
     id: LanguageServerId,
-    name: String,
+    /// `log` target for everything this transport logs, see [`crate::log_target`].
+    log_target: String,
     pending_requests: Mutex<HashMap<jsonrpc::Id, Sender<Result<Value>>>>,
     shutdown_requested: AtomicBool,
     inject_tx: UnboundedSender<Payload>,
@@ -58,7 +59,7 @@ impl Transport {
         server_stdin: BufWriter<ChildStdin>,
         server_stderr: BufReader<ChildStderr>,
         id: LanguageServerId,
-        name: String,
+        log_target: String,
     ) -> (
         UnboundedReceiver<(LanguageServerId, jsonrpc::Call)>,
         UnboundedSender<Payload>,
@@ -73,7 +74,7 @@ impl Transport {
 
         let transport = Self {
             id,
-            name,
+            log_target,
             pending_requests: Mutex::new(HashMap::default()),
             shutdown_requested: AtomicBool::new(false),
             inject_tx,
@@ -104,7 +105,7 @@ impl Transport {
         reader: &mut (impl AsyncBufRead + Unpin + Send),
         buffer: &mut String,
         content: &mut Vec<u8>,
-        language_server_name: &str,
+        log_target: &str,
     ) -> Result<ServerMessage> {
         let mut content_length = None;
         loop {
@@ -144,7 +145,7 @@ impl Transport {
         reader.read_exact(content).await?;
         let msg = std::str::from_utf8(content).context("invalid utf8 from server")?;
 
-        info!("{language_server_name} <- {msg}");
+        info!(target: log_target, "<- {msg}");
 
         // NOTE: We avoid using `?` here, since it would return early on error
         // and skip clearing `content`. By returning the result directly instead,
@@ -159,13 +160,14 @@ impl Transport {
     async fn recv_server_error(
         err: &mut (impl AsyncBufRead + Unpin + Send),
         buffer: &mut String,
-        language_server_name: &str,
+        log_target: &str,
     ) -> Result<()> {
         buffer.clear();
         if err.read_line(buffer).await? == 0 {
             return Err(Error::StreamClosed);
         };
-        error!("{language_server_name} err <- {buffer:?}");
+        let line = buffer.trim_end_matches(['\r', '\n']);
+        error!(target: log_target, "stderr <- {line:?}");
 
         Ok(())
     }
@@ -187,17 +189,15 @@ impl Transport {
             Payload::Notification(value) => serde_json::to_string(&value)?,
             Payload::Response(error) => serde_json::to_string(&error)?,
         };
-        self.send_string_to_server(server_stdin, json, &self.name)
-            .await
+        self.send_string_to_server(server_stdin, json).await
     }
 
     async fn send_string_to_server(
         &self,
         server_stdin: &mut BufWriter<ChildStdin>,
         request: String,
-        language_server_name: &str,
     ) -> Result<()> {
-        info!("{language_server_name} -> {request}");
+        info!(target: &self.log_target, "-> {request}");
 
         // send the headers
         server_stdin
@@ -216,13 +216,9 @@ impl Transport {
         &self,
         client_tx: &UnboundedSender<(LanguageServerId, jsonrpc::Call)>,
         msg: ServerMessage,
-        language_server_name: &str,
     ) -> Result<()> {
         match msg {
-            ServerMessage::Output(output) => {
-                self.process_request_response(output, language_server_name)
-                    .await?
-            }
+            ServerMessage::Output(output) => self.process_request_response(output).await?,
             ServerMessage::Call(jsonrpc::Call::MethodCall(ref method_call))
                 if self.shutdown_requested.load(Ordering::Acquire) =>
             {
@@ -252,15 +248,11 @@ impl Transport {
         Ok(())
     }
 
-    async fn process_request_response(
-        &self,
-        output: jsonrpc::Output,
-        language_server_name: &str,
-    ) -> Result<()> {
+    async fn process_request_response(&self, output: jsonrpc::Output) -> Result<()> {
         let (id, result) = match output {
             jsonrpc::Output::Success(jsonrpc::Success { id, result, .. }) => (id, Ok(result)),
             jsonrpc::Output::Failure(jsonrpc::Failure { id, error, .. }) => {
-                error!("{language_server_name} <- {error}");
+                error!(target: &self.log_target, "<- {error}");
                 (id, Err(error.into()))
             }
         };
@@ -268,13 +260,15 @@ impl Transport {
         if let Some(tx) = self.pending_requests.lock().await.remove(&id) {
             match tx.send(result).await {
                 Ok(_) => (),
-                Err(_) => log::debug!(
+                Err(_) => debug!(
+                    target: &self.log_target,
                     "Tried sending response into a closed channel (id={:?}), likely a fire-and-forget shutdown",
                     id
                 ),
             };
         } else {
-            log::error!(
+            error!(
+                target: &self.log_target,
                 "Discarding Language Server response without a request (id={:?}) {:?}",
                 id,
                 result
@@ -289,6 +283,7 @@ impl Transport {
         mut server_stdout: BufReader<ChildStdout>,
         client_tx: UnboundedSender<(LanguageServerId, jsonrpc::Call)>,
     ) {
+        let log_target = &transport.log_target;
         let mut recv_buffer = String::new();
         let mut content_buffer = Vec::new();
         loop {
@@ -296,25 +291,22 @@ impl Transport {
                 &mut server_stdout,
                 &mut recv_buffer,
                 &mut content_buffer,
-                &transport.name,
+                log_target,
             )
             .await
             {
                 Ok(msg) => {
-                    match transport
-                        .process_server_message(&client_tx, msg, &transport.name)
-                        .await
-                    {
+                    match transport.process_server_message(&client_tx, msg).await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("{} err: <- {err:?}", transport.name);
+                            error!(target: log_target, "err: <- {err:?}");
                             break;
                         }
                     };
                 }
                 Err(err) => {
                     if !matches!(err, Error::StreamClosed) {
-                        error!("Exiting {} after unexpected error: {err:?}", transport.name);
+                        error!(target: log_target, "exiting after unexpected error: {err:?}");
                     }
 
                     // Close any outstanding requests.
@@ -322,7 +314,11 @@ impl Transport {
                         match tx.send(Err(Error::StreamClosed)).await {
                             Ok(_) => (),
                             Err(_) => {
-                                error!("Could not close request on a closed channel (id={:?})", id)
+                                error!(
+                                    target: log_target,
+                                    "Could not close request on a closed channel (id={:?})",
+                                    id
+                                )
                             }
                         }
                     }
@@ -335,12 +331,12 @@ impl Transport {
                             params: jsonrpc::Params::None,
                         }));
                     match transport
-                        .process_server_message(&client_tx, notification, &transport.name)
+                        .process_server_message(&client_tx, notification)
                         .await
                     {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("err: <- {:?}", err);
+                            error!(target: log_target, "err: <- {:?}", err);
                         }
                     }
                     break;
@@ -350,14 +346,17 @@ impl Transport {
     }
 
     async fn err(transport: Arc<Self>, mut server_stderr: BufReader<ChildStderr>) {
+        let log_target = &transport.log_target;
         let mut recv_buffer = String::new();
         loop {
-            match Self::recv_server_error(&mut server_stderr, &mut recv_buffer, &transport.name)
-                .await
-            {
+            match Self::recv_server_error(&mut server_stderr, &mut recv_buffer, log_target).await {
                 Ok(_) => {}
+                Err(Error::StreamClosed) => {
+                    debug!(target: log_target, "stderr closed");
+                    break;
+                }
                 Err(err) => {
-                    error!("{} err: <- {err:?}", transport.name);
+                    error!(target: log_target, "stderr err: <- {err:?}");
                     break;
                 }
             }
@@ -372,6 +371,7 @@ impl Transport {
         mut inject_rx: UnboundedReceiver<Payload>,
         initialize_notify: Arc<Notify>,
     ) {
+        let log_target = &transport.log_target;
         let mut pending_messages: Vec<Payload> = Vec::new();
         let mut is_pending = true;
 
@@ -426,21 +426,20 @@ impl Transport {
                         method: lsp::notification::Initialized::METHOD.to_string(),
                         params: jsonrpc::Params::None,
                     }));
-                    let language_server_name = &transport.name;
-                    match transport.process_server_message(&client_tx, notification, language_server_name).await {
+                    match transport.process_server_message(&client_tx, notification).await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("{language_server_name} err: <- {err:?}");
+                            error!(target: log_target, "err: <- {err:?}");
                         }
                     }
 
                     // drain the pending queue and send payloads to server
                     for msg in pending_messages.drain(..) {
-                        log::info!("Draining pending message {:?}", msg);
+                        info!(target: log_target, "Draining pending message {:?}", msg);
                         match transport.send_payload_to_server(&mut server_stdin, msg).await {
                             Ok(_) => {}
                             Err(err) => {
-                                error!("{language_server_name} err: <- {err:?}");
+                                error!(target: log_target, "err: <- {err:?}");
                             }
                         }
                     }
@@ -448,7 +447,7 @@ impl Transport {
                 msg = client_rx.recv() => {
                     if let Some(msg) = msg {
                         if is_pending && is_shutdown(&msg) {
-                            log::info!("Language server not initialized, shutting down");
+                            info!(target: log_target, "Language server not initialized, shutting down");
                             break;
                         } else if is_pending && !is_initialize(&msg) {
                             // ignore notifications
@@ -456,7 +455,7 @@ impl Transport {
                                 continue;
                             }
 
-                            log::info!("Language server not initialized, delaying request");
+                            info!(target: log_target, "Language server not initialized, delaying request");
                             pending_messages.push(msg);
                         } else {
                             let is_shutdown_msg = is_shutdown(&msg);
@@ -478,7 +477,7 @@ impl Transport {
                                     }
                                 }
                                 Err(err) => {
-                                    error!("{} err: <- {err:?}", transport.name);
+                                    error!(target: log_target, "err: <- {err:?}");
                                 }
                             }
                         }
@@ -492,7 +491,7 @@ impl Transport {
                         match transport.send_payload_to_server(&mut server_stdin, msg).await {
                             Ok(_) => {}
                             Err(err) => {
-                                error!("{} inject err: <- {err:?}", transport.name);
+                                error!(target: log_target, "inject err: <- {err:?}");
                             }
                         }
                     }

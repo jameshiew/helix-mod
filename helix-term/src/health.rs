@@ -84,6 +84,11 @@ pub fn general() -> std::io::Result<()> {
     writeln!(stdout, "Log file: {}", log_file.display())?;
     writeln!(
         stdout,
+        "Language server log directory: {}",
+        helix_loader::lsp_log_dir().display()
+    )?;
+    writeln!(
+        stdout,
         "Runtime directories: {}",
         rt_dirs
             .iter()

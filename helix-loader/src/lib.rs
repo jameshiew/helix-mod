@@ -164,6 +164,13 @@ pub fn default_log_file() -> PathBuf {
     cache_dir().join("helix.log")
 }
 
+/// Directory beside the main log file holding one log file per language server.
+pub fn lsp_log_dir() -> PathBuf {
+    let log_file = log_file();
+    let parent = log_file.parent().unwrap_or(Path::new(""));
+    parent.join("lsp")
+}
+
 /// Merge two TOML documents, merging values from `right` onto `left`
 ///
 /// `merge_depth` sets the nesting depth up to which values are merged instead

@@ -56,6 +56,8 @@ fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
 pub struct Client {
     id: LanguageServerId,
     name: String,
+    /// `log` target for records about this server, see [`crate::log_target`].
+    log_target: String,
     _process: Child,
     server_tx: UnboundedSender<Payload>,
     request_counter: AtomicU64,
@@ -227,6 +229,9 @@ impl Client {
         // Resolve path to the binary
         let cmd = helix_stdx::env::which(cmd)?;
 
+        let log_target = crate::log_target(&name);
+        info!(target: &log_target, "starting {cmd:?} with args {args:?} in {root_path:?}");
+
         let process = Command::new(cmd)
             .envs(server_environment)
             .args(args)
@@ -246,7 +251,7 @@ impl Client {
         let stderr = BufReader::new(process.stderr.take().expect("Failed to open stderr"));
 
         let (server_rx, server_tx, initialize_notify, shutdown_flushed) =
-            Transport::start(reader, writer, stderr, id, name.clone());
+            Transport::start(reader, writer, stderr, id, log_target.clone());
 
         let workspace_folders = root_uri
             .clone()
@@ -256,6 +261,7 @@ impl Client {
         let client = Self {
             id,
             name,
+            log_target,
             _process: process,
             server_tx,
             request_counter: AtomicU64::new(0),
@@ -275,6 +281,11 @@ impl Client {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// `log` target for records about this server, see [`crate::log_target`].
+    pub fn log_target(&self) -> &str {
+        &self.log_target
     }
 
     pub fn id(&self) -> LanguageServerId {
@@ -419,9 +430,12 @@ impl Client {
                 "utf-16" => Some(OffsetEncoding::Utf16),
                 "utf-32" => Some(OffsetEncoding::Utf32),
                 encoding => {
-                    log::error!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
+                    log::error!(
+                        target: &self.log_target,
+                        "server provided invalid position encoding {encoding}, defaulting to utf-16"
+                    );
                     None
-                },
+                }
             })
             .unwrap_or_default()
     }
@@ -512,9 +526,9 @@ impl Client {
             Ok(params) => params,
             Err(err) => {
                 log::error!(
-                    "Failed to serialize params for notification '{}' for server '{}': {err}",
+                    target: &self.log_target,
+                    "failed to serialize params for notification '{}': {err}",
                     R::METHOD,
-                    self.name,
                 );
                 return;
             }
@@ -528,9 +542,9 @@ impl Client {
 
         if let Err(err) = server_tx.send(Payload::Notification(notification)) {
             log::error!(
-                "Failed to send notification '{}' to server '{}': {err}",
+                target: &self.log_target,
+                "failed to send notification '{}': {err}",
                 R::METHOD,
-                self.name
             );
         }
     }
@@ -571,7 +585,7 @@ impl Client {
 
     pub(crate) async fn initialize(&self, enable_snippets: bool) -> Result<lsp::InitializeResult> {
         if let Some(config) = &self.config {
-            log::info!("Using custom LSP config: {}", config);
+            log::info!(target: &self.log_target, "using custom LSP config: {config}");
         }
 
         #[allow(deprecated)]
