@@ -2586,7 +2586,7 @@ fn open_log(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> any
 
     let path = match args.first() {
         Some(name) => {
-            let path = crate::logging::lsp_log_file(name);
+            let path = helix_loader::lsp_log_file(name);
             ensure!(
                 path.exists(),
                 "language server {name:?} has no log file at {}",

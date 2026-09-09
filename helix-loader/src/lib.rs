@@ -171,6 +171,24 @@ pub fn lsp_log_dir() -> PathBuf {
     parent.join("lsp")
 }
 
+/// The log file of the language server `name`, which receives its stderr.
+pub fn lsp_log_file(name: &str) -> PathBuf {
+    lsp_log_dir().join(lsp_log_file_name(name))
+}
+
+fn lsp_log_file_name(name: &str) -> String {
+    let mut file_name: String = name
+        .chars()
+        .map(|c| match c {
+            '-' | '_' | '.' => c,
+            c if c.is_alphanumeric() => c,
+            _ => '_',
+        })
+        .collect();
+    file_name.push_str(".log");
+    file_name
+}
+
 /// Merge two TOML documents, merging values from `right` onto `left`
 ///
 /// `merge_depth` sets the nesting depth up to which values are merged instead
@@ -290,6 +308,26 @@ fn ensure_parent_dir(path: &Path) {
         if !parent.exists() {
             std::fs::create_dir_all(parent).ok();
         }
+    }
+}
+
+#[cfg(test)]
+mod lsp_log_file_name_tests {
+    use super::lsp_log_file_name;
+
+    #[test]
+    fn keeps_usual_server_names() {
+        assert_eq!(lsp_log_file_name("rust-analyzer"), "rust-analyzer.log");
+        assert_eq!(
+            lsp_log_file_name("typescript_ls.v2"),
+            "typescript_ls.v2.log"
+        );
+    }
+
+    #[test]
+    fn replaces_characters_unsafe_in_file_names() {
+        assert_eq!(lsp_log_file_name("my/odd server"), "my_odd_server.log");
+        assert_eq!(lsp_log_file_name("..\\up"), ".._up.log");
     }
 }
 

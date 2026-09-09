@@ -40,6 +40,32 @@ use tokio::{
     },
 };
 
+/// Where a language server's stderr goes: appended verbatim to the server's
+/// own log file. If that file cannot be opened the output is discarded, so a
+/// logging problem never stops a server from starting.
+fn stderr_log(name: &str) -> Stdio {
+    let path = helix_loader::lsp_log_file(name);
+    let file = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            std::fs::File::options()
+                .append(true)
+                .create(true)
+                .open(&path)
+        });
+    match file {
+        Ok(file) => Stdio::from(file),
+        Err(err) => {
+            log::warn!(
+                "discarding stderr of {name:?}: could not open {}: {err}",
+                path.display()
+            );
+            Stdio::null()
+        }
+    }
+}
+
 fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
     lsp::WorkspaceFolder {
         name: uri
@@ -56,8 +82,6 @@ fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
 pub struct Client {
     id: LanguageServerId,
     name: String,
-    /// `log` target for records about this server, see [`crate::log_target`].
-    log_target: String,
     _process: Child,
     server_tx: UnboundedSender<Payload>,
     request_counter: AtomicU64,
@@ -229,15 +253,12 @@ impl Client {
         // Resolve path to the binary
         let cmd = helix_stdx::env::which(cmd)?;
 
-        let log_target = crate::log_target(&name);
-        info!(target: &log_target, "starting {cmd:?} with args {args:?} in {root_path:?}");
-
         let process = Command::new(cmd)
             .envs(server_environment)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(stderr_log(&name))
             .current_dir(&root_path)
             // make sure the process is reaped on drop
             .kill_on_drop(true)
@@ -248,10 +269,9 @@ impl Client {
         // TODO: do we need bufreader/writer here? or do we use async wrappers on unblock?
         let writer = BufWriter::new(process.stdin.take().expect("Failed to open stdin"));
         let reader = BufReader::new(process.stdout.take().expect("Failed to open stdout"));
-        let stderr = BufReader::new(process.stderr.take().expect("Failed to open stderr"));
 
         let (server_rx, server_tx, initialize_notify, shutdown_flushed) =
-            Transport::start(reader, writer, stderr, id, log_target.clone());
+            Transport::start(reader, writer, id, name.clone());
 
         let workspace_folders = root_uri
             .clone()
@@ -261,7 +281,6 @@ impl Client {
         let client = Self {
             id,
             name,
-            log_target,
             _process: process,
             server_tx,
             request_counter: AtomicU64::new(0),
@@ -281,11 +300,6 @@ impl Client {
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// `log` target for records about this server, see [`crate::log_target`].
-    pub fn log_target(&self) -> &str {
-        &self.log_target
     }
 
     pub fn id(&self) -> LanguageServerId {
@@ -430,12 +444,9 @@ impl Client {
                 "utf-16" => Some(OffsetEncoding::Utf16),
                 "utf-32" => Some(OffsetEncoding::Utf32),
                 encoding => {
-                    log::error!(
-                        target: &self.log_target,
-                        "server provided invalid position encoding {encoding}, defaulting to utf-16"
-                    );
+                    log::error!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
                     None
-                }
+                },
             })
             .unwrap_or_default()
     }
@@ -526,9 +537,9 @@ impl Client {
             Ok(params) => params,
             Err(err) => {
                 log::error!(
-                    target: &self.log_target,
-                    "failed to serialize params for notification '{}': {err}",
+                    "Failed to serialize params for notification '{}' for server '{}': {err}",
                     R::METHOD,
+                    self.name,
                 );
                 return;
             }
@@ -542,9 +553,9 @@ impl Client {
 
         if let Err(err) = server_tx.send(Payload::Notification(notification)) {
             log::error!(
-                target: &self.log_target,
-                "failed to send notification '{}': {err}",
+                "Failed to send notification '{}' to server '{}': {err}",
                 R::METHOD,
+                self.name
             );
         }
     }
@@ -585,7 +596,7 @@ impl Client {
 
     pub(crate) async fn initialize(&self, enable_snippets: bool) -> Result<lsp::InitializeResult> {
         if let Some(config) = &self.config {
-            log::info!(target: &self.log_target, "using custom LSP config: {config}");
+            log::info!("Using custom LSP config: {}", config);
         }
 
         #[allow(deprecated)]

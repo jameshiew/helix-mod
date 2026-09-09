@@ -12,11 +12,7 @@ fn setup_logging(verbosity: u64) -> Result<()> {
         _3_or_more => log::LevelFilter::Trace,
     };
 
-    helix_term::logging::init_file(
-        level,
-        &helix_loader::log_file(),
-        helix_loader::lsp_log_dir(),
-    )?;
+    helix_term::logging::init_file(level, &helix_loader::log_file())?;
 
     Ok(())
 }
@@ -61,8 +57,8 @@ FLAGS:
     -v                             Increase logging verbosity each use for up to 3 times
     --log <file>                   Specify a file to use for logging
                                    (default file: {})
-                                   Each language server logs to its own file in
-                                   the lsp/ directory beside it
+                                   Each language server's stderr goes to its own
+                                   file in the lsp/ directory beside it
     -V, --version                  Print version information
     --vsplit                       Split all given files vertically into different windows
     --hsplit                       Split all given files horizontally into different windows
