@@ -204,19 +204,19 @@ fn lsp_log_file_name(name: &str) -> String {
 /// ```toml
 /// [[language]]
 /// name = "toml"
-/// language-server = { command = "taplo", args = ["lsp", "stdio"] }
+/// language-server = { command = "tombi", args = ["lsp"] }
 /// ```
 /// a:
 /// ```toml
 /// [[language]]
-/// language-server = { command = "/usr/bin/taplo" }
+/// language-server = { command = "/usr/bin/tombi" }
 /// ```
 ///
 /// into:
 /// ```toml
 /// [[language]]
 /// name = "toml"
-/// language-server = { command = "/usr/bin/taplo" }
+/// language-server = { command = "/usr/bin/tombi" }
 /// ```
 ///
 /// thus it overrides the third depth-level of b with values of a if they exist,

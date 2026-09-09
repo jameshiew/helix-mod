@@ -37,7 +37,7 @@
 | concerto | ✓ | ✓ | ✓ |  |  |  |
 | cpon | ✓ |  | ✓ |  |  |  |
 | cpp | ✓ | ✓ | ✓ | ✓ | ✓ | `clangd` |
-| cross-config | ✓ | ✓ |  |  | ✓ | `taplo`, `tombi` |
+| cross-config | ✓ | ✓ |  |  | ✓ | `tombi` |
 | crystal | ✓ | ✓ | ✓ | ✓ | ✓ | `crystalline`, `ameba-ls` |
 | css | ✓ | ✓ | ✓ |  | ✓ | `vscode-css-language-server` |
 | csv | ✓ |  |  |  |  |  |
@@ -91,7 +91,7 @@
 | gherkin | ✓ |  |  |  |  |  |
 | ghostty | ✓ |  |  |  |  | `ghostty-ls` |
 | git-attributes | ✓ |  |  |  |  |  |
-| git-cliff-config | ✓ | ✓ |  |  | ✓ | `taplo`, `tombi` |
+| git-cliff-config | ✓ | ✓ |  |  | ✓ | `tombi` |
 | git-commit | ✓ | ✓ |  |  |  | `commit-lsp` |
 | git-config | ✓ | ✓ |  | ✓ |  |  |
 | git-ignore | ✓ |  |  |  |  |  |
@@ -142,7 +142,7 @@
 | java | ✓ | ✓ | ✓ | ✓ | ✓ | `jdtls` |
 | javascript | ✓ | ✓ | ✓ | ✓ | ✓ | `typescript-language-server` |
 | jinja | ✓ |  |  |  |  |  |
-| jjconfig | ✓ | ✓ | ✓ |  |  | `taplo`, `tombi` |
+| jjconfig | ✓ | ✓ | ✓ |  |  | `tombi` |
 | jjdescription | ✓ |  |  |  |  |  |
 | jjrevset | ✓ |  |  |  |  |  |
 | jjtemplate | ✓ |  |  |  |  |  |
@@ -189,7 +189,7 @@
 | meson | ✓ |  | ✓ |  |  | `mesonlsp` |
 | metamath | ✓ |  |  | ✓ |  | `mm-lsp-server` |
 | mint |  |  |  |  |  | `mint` |
-| miseconfig | ✓ | ✓ | ✓ |  |  | `taplo`, `tombi` |
+| miseconfig | ✓ | ✓ | ✓ |  |  | `tombi` |
 | mojo | ✓ | ✓ | ✓ |  |  | `pixi` |
 | moonbit | ✓ | ✓ | ✓ | ✓ |  | `moonbit-lsp` |
 | move | ✓ |  | ✓ |  |  |  |
@@ -304,7 +304,7 @@
 | tlaplus | ✓ |  |  |  |  |  |
 | todotxt | ✓ |  |  |  |  |  |
 | tolk | ✓ |  | ✓ |  |  |  |
-| toml | ✓ | ✓ | ✓ | ✓ | ✓ | `taplo`, `tombi` |
+| toml | ✓ | ✓ | ✓ | ✓ | ✓ | `tombi` |
 | tql | ✓ |  | ✓ |  |  |  |
 | tsq | ✓ |  |  |  | ✓ | `ts_query_ls` |
 | tsx | ✓ | ✓ | ✓ | ✓ | ✓ | `typescript-language-server` |

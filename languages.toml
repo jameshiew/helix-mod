@@ -154,7 +154,6 @@ svlangserver = { command = "svlangserver", args = [], config.systemverilog.inclu
 swipl = { command = "swipl", args = [ "-g", "use_module(library(lsp_server))", "-g", "lsp_server:main", "-t", "halt", "--", "stdio" ] }
 superhtml = {  command = "superhtml", args = ["lsp"]}
 tailwindcss-ls = { command = "tailwindcss-language-server", args = ["--stdio"] }
-taplo = { command = "taplo", args = ["lsp", "stdio"], config = {} }
 templ = { command = "templ", args = ["lsp"] }
 terraform-ls = { command = "terraform-ls", args = ["serve"] }
 texlab = { command = "texlab" }
@@ -430,7 +429,7 @@ file-types = [
   { glob = "staticcheck.conf" },
 ]
 comment-token = "#"
-language-servers = [ "taplo", "tombi" ]
+language-servers = [ "tombi" ]
 indent = { tab-width = 2, unit = "  " }
 
 [[grammar]]
@@ -3997,7 +3996,7 @@ injection-regex = "jjconfig"
 grammar = "toml"
 file-types = [{ glob = "jj/config.toml" }, { glob = "jj/**/*.toml" }, { glob = ".jj/repo/*.toml" }]
 comment-token = "#"
-language-servers = [ "taplo", "tombi" ]
+language-servers = [ "tombi" ]
 indent = { tab-width = 2, unit = "  " }
 
 [[language]]
@@ -4047,7 +4046,7 @@ file-types = [
   { glob = ".config/mise/conf.d/*.toml" },
 ]
 comment-token = "#"
-language-servers = [ "taplo", "tombi" ]
+language-servers = [ "tombi" ]
 indent = { tab-width = 2, unit = "  " }
 
 [[language]]
@@ -5153,7 +5152,7 @@ injection-regex = "cross(-config)"
 grammar = "toml"
 comment-token = "#"
 file-types = [{glob = "Cross.toml"}]
-language-servers = [ "taplo", "tombi" ]
+language-servers = [ "tombi" ]
 indent = { tab-width = 2, unit = "  " }
 
 [[language]]
@@ -5163,7 +5162,7 @@ injection-regex = "git-cliff(-config)"
 grammar = "toml"
 comment-token = "#"
 file-types = [{ glob = "cliff.toml" }]
-language-servers = ["taplo", "tombi"]
+language-servers = ["tombi"]
 indent = { tab-width = 2, unit = "  " }
 
 [[language]]
