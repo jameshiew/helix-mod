@@ -41,10 +41,16 @@ enum ServerMessage {
 }
 
 #[derive(Debug)]
+struct PendingRequest {
+    method: String,
+    chan: Sender<Result<Value>>,
+}
+
+#[derive(Debug)]
 pub struct Transport {
     id: LanguageServerId,
     name: String,
-    pending_requests: Mutex<HashMap<jsonrpc::Id, Sender<Result<Value>>>>,
+    pending_requests: Mutex<HashMap<jsonrpc::Id, PendingRequest>>,
     shutdown_requested: AtomicBool,
     inject_tx: UnboundedSender<Payload>,
     /// Notified once the `exit` notification has been flushed to the server's stdin
@@ -162,10 +168,13 @@ impl Transport {
         //TODO: reuse string
         let json = match payload {
             Payload::Request { chan, value } => {
-                self.pending_requests
-                    .lock()
-                    .await
-                    .insert(value.id.clone(), chan);
+                self.pending_requests.lock().await.insert(
+                    value.id.clone(),
+                    PendingRequest {
+                        method: value.method.clone(),
+                        chan,
+                    },
+                );
                 serde_json::to_string(&value)?
             }
             Payload::Notification(value) => serde_json::to_string(&value)?,
@@ -205,7 +214,7 @@ impl Transport {
         match msg {
             ServerMessage::Output(output) => {
                 self.process_request_response(output, language_server_name)
-                    .await?
+                    .await
             }
             ServerMessage::Call(jsonrpc::Call::MethodCall(ref method_call))
                 if self.shutdown_requested.load(Ordering::Acquire) =>
@@ -230,42 +239,40 @@ impl Transport {
             ServerMessage::Call(call) => {
                 client_tx
                     .send((self.id, call))
-                    .context("failed to send a message to server")?;
+                    .context("the editor is no longer listening for messages from the server")?;
             }
         };
         Ok(())
     }
 
-    async fn process_request_response(
-        &self,
-        output: jsonrpc::Output,
-        language_server_name: &str,
-    ) -> Result<()> {
+    async fn process_request_response(&self, output: jsonrpc::Output, name: &str) {
         let (id, result) = match output {
             jsonrpc::Output::Success(jsonrpc::Success { id, result, .. }) => (id, Ok(result)),
-            jsonrpc::Output::Failure(jsonrpc::Failure { id, error, .. }) => {
-                error!("{language_server_name} <- {error}");
-                (id, Err(error.into()))
-            }
+            jsonrpc::Output::Failure(jsonrpc::Failure { id, error, .. }) => (id, Err(error)),
         };
 
-        if let Some(tx) = self.pending_requests.lock().await.remove(&id) {
-            match tx.send(result).await {
-                Ok(_) => (),
-                Err(_) => log::debug!(
-                    "Tried sending response into a closed channel (id={:?}), likely a fire-and-forget shutdown",
-                    id
-                ),
-            };
-        } else {
-            log::error!(
-                "Discarding Language Server response without a request (id={:?}) {:?}",
-                id,
-                result
-            );
+        let Some(PendingRequest { method, chan }) = self.pending_requests.lock().await.remove(&id)
+        else {
+            match result {
+                Ok(value) => {
+                    error!("{name}: discarding response to an unknown request (id={id}): {value}")
+                }
+                Err(error) => {
+                    error!("{name}: discarding error for an unknown request (id={id}): {error}")
+                }
+            }
+            return;
+        };
+
+        if let Err(error) = &result {
+            error!("{name}: {method} (id={id}) failed: {error}");
         }
 
-        Ok(())
+        if chan.send(result.map_err(Into::into)).await.is_err() {
+            log::debug!(
+                "{name}: dropping response to {method} (id={id}) because nothing is waiting for it"
+            );
+        }
     }
 
     async fn recv(
@@ -273,6 +280,7 @@ impl Transport {
         mut server_stdout: BufReader<ChildStdout>,
         client_tx: UnboundedSender<(LanguageServerId, jsonrpc::Call)>,
     ) {
+        let name = &transport.name;
         let mut recv_buffer = String::new();
         let mut content_buffer = Vec::new();
         loop {
@@ -280,34 +288,38 @@ impl Transport {
                 &mut server_stdout,
                 &mut recv_buffer,
                 &mut content_buffer,
-                &transport.name,
+                name,
             )
             .await
             {
                 Ok(msg) => {
-                    match transport
-                        .process_server_message(&client_tx, msg, &transport.name)
+                    // The editor drops its receiver only while it shuts down, so a
+                    // forwarding failure means there is nobody left to tell.
+                    if let Err(err) = transport
+                        .process_server_message(&client_tx, msg, name)
                         .await
                     {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("{} err: <- {err:?}", transport.name);
-                            break;
-                        }
-                    };
+                        log::debug!("{name}: stopped reading from the server: {err}");
+                        break;
+                    }
                 }
                 Err(err) => {
                     if !matches!(err, Error::StreamClosed) {
-                        error!("Exiting {} after unexpected error: {err:?}", transport.name);
+                        error!("{name}: stopped reading from the server after an unexpected error: {err:#}");
+                    } else if transport.shutdown_requested.load(Ordering::Acquire) {
+                        info!("{name}: server closed its stream");
+                    } else {
+                        log::warn!(
+                            "{name}: server closed its stream without being asked to shut down"
+                        );
                     }
 
                     // Close any outstanding requests.
-                    for (id, tx) in transport.pending_requests.lock().await.drain() {
-                        match tx.send(Err(Error::StreamClosed)).await {
-                            Ok(_) => (),
-                            Err(_) => {
-                                error!("Could not close request on a closed channel (id={:?})", id)
-                            }
+                    for (id, PendingRequest { method, chan }) in
+                        transport.pending_requests.lock().await.drain()
+                    {
+                        if chan.send(Err(Error::StreamClosed)).await.is_err() {
+                            log::debug!("{name}: {method} (id={id}) was unanswered when the stream closed, but nothing is waiting for it");
                         }
                     }
 
@@ -318,14 +330,13 @@ impl Transport {
                             method: lsp::notification::Exit::METHOD.to_string(),
                             params: jsonrpc::Params::None,
                         }));
-                    match transport
-                        .process_server_message(&client_tx, notification, &transport.name)
+                    if let Err(err) = transport
+                        .process_server_message(&client_tx, notification, name)
                         .await
                     {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("err: <- {:?}", err);
-                        }
+                        log::debug!(
+                            "{name}: could not tell the editor that the server exited: {err}"
+                        );
                     }
                     break;
                 }
@@ -341,6 +352,7 @@ impl Transport {
         mut inject_rx: UnboundedReceiver<Payload>,
         initialize_notify: Arc<Notify>,
     ) {
+        let name = &transport.name;
         let mut pending_messages: Vec<Payload> = Vec::new();
         let mut is_pending = true;
 
@@ -395,29 +407,24 @@ impl Transport {
                         method: lsp::notification::Initialized::METHOD.to_string(),
                         params: jsonrpc::Params::None,
                     }));
-                    let language_server_name = &transport.name;
-                    match transport.process_server_message(&client_tx, notification, language_server_name).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("{language_server_name} err: <- {err:?}");
-                        }
+                    if let Err(err) = transport.process_server_message(&client_tx, notification, name).await {
+                        log::debug!("{name}: could not tell the editor that the server initialized: {err}");
                     }
 
-                    // drain the pending queue and send payloads to server
+                    if !pending_messages.is_empty() {
+                        info!("{name}: server initialized, sending {} queued messages", pending_messages.len());
+                    }
                     for msg in pending_messages.drain(..) {
-                        log::info!("Draining pending message {:?}", msg);
-                        match transport.send_payload_to_server(&mut server_stdin, msg).await {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("{language_server_name} err: <- {err:?}");
-                            }
+                        if let Err(err) = transport.send_payload_to_server(&mut server_stdin, msg).await {
+                            error!("{name}: could not send a queued message to the server: {err:#}");
                         }
                     }
                 }
                 msg = client_rx.recv() => {
                     if let Some(msg) = msg {
                         if is_pending && is_shutdown(&msg) {
-                            log::info!("Language server not initialized, shutting down");
+                            info!("{name}: shutdown requested before the server initialized, stopping");
+                            transport.shutdown_requested.store(true, Ordering::Release);
                             break;
                         } else if is_pending && !is_initialize(&msg) {
                             // ignore notifications
@@ -425,7 +432,7 @@ impl Transport {
                                 continue;
                             }
 
-                            log::info!("Language server not initialized, delaying request");
+                            info!("{name}: queueing a message until the server has initialized");
                             pending_messages.push(msg);
                         } else {
                             let is_shutdown_msg = is_shutdown(&msg);
@@ -447,7 +454,7 @@ impl Transport {
                                     }
                                 }
                                 Err(err) => {
-                                    error!("{} err: <- {err:?}", transport.name);
+                                    error!("{name}: could not send a message to the server: {err:#}");
                                 }
                             }
                         }
@@ -458,11 +465,8 @@ impl Transport {
                 }
                 msg = inject_rx.recv() => {
                     if let Some(msg) = msg {
-                        match transport.send_payload_to_server(&mut server_stdin, msg).await {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("{} inject err: <- {err:?}", transport.name);
-                            }
+                        if let Err(err) = transport.send_payload_to_server(&mut server_stdin, msg).await {
+                            error!("{name}: could not send a reply to the server: {err:#}");
                         }
                     }
                 }
