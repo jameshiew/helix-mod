@@ -1516,7 +1516,6 @@ version = "25.7.1+mod"
 dependencies = [
  "anyhow",
  "arc-swap",
- "bitflags",
  "chrono",
  "encoding_rs",
  "foldhash 0.2.0",
@@ -1525,7 +1524,6 @@ dependencies = [
  "helix-parsec",
  "helix-stdx",
  "imara-diff",
- "indoc",
  "log",
  "nucleo",
  "parking_lot",
@@ -1673,7 +1671,6 @@ dependencies = [
  "crossterm",
  "dashmap",
  "futures-util",
- "grep-matcher",
  "grep-regex",
  "grep-searcher",
  "helix-core",
@@ -1692,14 +1689,12 @@ dependencies = [
  "log",
  "nucleo",
  "open",
- "parking_lot",
  "pulldown-cmark",
  "same-file",
  "serde",
  "serde_json",
  "signal-hook 0.4.4",
  "signal-hook-tokio",
- "smallvec",
  "tempfile",
  "termina",
  "termini",
@@ -1767,7 +1762,6 @@ dependencies = [
  "log",
  "parking_lot",
  "quickcheck",
- "rustix 1.1.4",
  "serde",
  "serde_json",
  "slotmap",
@@ -3512,12 +3506,10 @@ name = "xtask"
 version = "25.7.1+mod"
 dependencies = [
  "helix-core",
- "helix-loader",
  "helix-stdx",
  "helix-term",
  "helix-view",
  "ropey",
- "toml",
 ]
 
 [[package]]
