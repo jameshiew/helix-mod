@@ -1,5 +1,5 @@
 use crate::register::Registers;
-use helix_core::unicode::width::UnicodeWidthStr;
+use helix_core::unicode::width::DisplayWidth;
 use std::{borrow::Cow, fmt::Write};
 
 #[derive(Debug)]

@@ -19,7 +19,7 @@ use helix_core::{
     movement::Direction,
     syntax::{self, OverlayHighlights},
     text_annotations::TextAnnotations,
-    unicode::width::UnicodeWidthStr,
+    unicode::width::DisplayWidth,
     visual_offset_from_block, Change, Position, Range, Selection, Transaction,
 };
 use helix_view::{

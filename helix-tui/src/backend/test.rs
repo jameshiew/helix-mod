@@ -3,7 +3,7 @@ use crate::{
     buffer::{Buffer, Cell},
     terminal::Config,
 };
-use helix_core::unicode::width::UnicodeWidthStr;
+use helix_core::unicode::width::DisplayWidth;
 use helix_view::graphics::{CursorKind, Rect};
 use std::{fmt::Write, io};
 

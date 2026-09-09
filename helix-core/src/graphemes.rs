@@ -3,7 +3,6 @@
 //! Based on <https://github.com/cessen/led/blob/c4fa72405f510b7fd16052f90a598c429b3104a6/src/graphemes.rs>
 use ropey::{str_utils::byte_to_char_idx, RopeSlice};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
-use unicode_width::UnicodeWidthStr;
 
 use std::borrow::Cow;
 use std::fmt::{self, Debug, Display};
@@ -53,10 +52,6 @@ impl<'a> Grapheme<'a> {
     #[inline]
     pub fn width(&self) -> usize {
         match *self {
-            // width is not cached because we are dealing with
-            // ASCII almost all the time which already has a fastpath
-            // it's okay to convert to u16 here because no codepoint has a width larger
-            // than 2 and graphemes are usually atmost two visible codepoints wide
             Grapheme::Other { ref g } => grapheme_width(g),
             Grapheme::Tab { width } => width,
             Grapheme::Newline => 1,
@@ -95,28 +90,8 @@ impl Display for Grapheme<'_> {
 
 #[must_use]
 pub fn grapheme_width(g: &str) -> usize {
-    if g.as_bytes()[0] <= 127 {
-        // Fast-path ascii.
-        // Point 1: theoretically, ascii control characters should have zero
-        // width, but in our case we actually want them to have width: if they
-        // show up in text, we want to treat them as textual elements that can
-        // be edited.  So we can get away with making all ascii single width
-        // here.
-        // Point 2: we're only examining the first codepoint here, which means
-        // we're ignoring graphemes formed with combining characters.  However,
-        // if it starts with ascii, it's going to be a single-width grapeheme
-        // regardless, so, again, we can get away with that here.
-        // Point 3: we're only examining the first _byte_.  But for utf8, when
-        // checking for ascii range values only, that works.
-        1
-    } else {
-        // We use max(1) here because all grapeheme clusters--even illformed
-        // ones--should have at least some width so they can be edited
-        // properly.
-        // TODO properly handle unicode width for all codepoints
-        // example of where unicode width is currently wrong: 🤦🏼‍♂️ (taken from https://hsivonen.fi/string-length/)
-        UnicodeWidthStr::width(g).max(1)
-    }
+    // Even zero-width graphemes need a cell in the document to remain editable.
+    crate::unicode::width::grapheme_width(g).max(1)
 }
 
 // NOTE: for byte indexing versions of these functions see `RopeSliceExt`'s

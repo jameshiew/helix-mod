@@ -37,7 +37,7 @@ pub mod wrap;
 pub mod unicode {
     pub use unicode_general_category as category;
     pub use unicode_segmentation as segmentation;
-    pub use unicode_width as width;
+    pub mod width;
 }
 
 pub use helix_loader::find_workspace;

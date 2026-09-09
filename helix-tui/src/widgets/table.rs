@@ -4,7 +4,7 @@ use crate::{
     text::Text,
     widgets::{Block, Widget},
 };
-use helix_core::unicode::width::UnicodeWidthStr;
+use helix_core::unicode::width::DisplayWidth;
 use helix_view::graphics::{Rect, Style};
 
 /// A [`Cell`] contains the [`Text`] to be displayed in a [`Row`] of a [`Table`].

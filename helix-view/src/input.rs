@@ -1,6 +1,6 @@
 //! Input event handling, currently backed by termina.
 use anyhow::{anyhow, Error};
-use helix_core::unicode::{segmentation::UnicodeSegmentation, width::UnicodeWidthStr};
+use helix_core::unicode::{segmentation::UnicodeSegmentation, width::DisplayWidth};
 use serde::de::{self, Deserialize, Deserializer};
 use std::fmt;
 
@@ -249,7 +249,7 @@ impl fmt::Display for KeyEvent {
     }
 }
 
-impl UnicodeWidthStr for KeyEvent {
+impl DisplayWidth for KeyEvent {
     fn width(&self) -> usize {
         use helix_core::unicode::width::UnicodeWidthChar;
         let mut width = match self.code {
@@ -322,10 +322,6 @@ impl UnicodeWidthStr for KeyEvent {
             width += 5;
         }
         width
-    }
-
-    fn width_cjk(&self) -> usize {
-        self.width()
     }
 }
 

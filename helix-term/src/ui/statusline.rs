@@ -1,5 +1,5 @@
 use helix_core::indent::IndentStyle;
-use helix_core::{coords_at_pos, encoding, unicode::width::UnicodeWidthStr, Position};
+use helix_core::{coords_at_pos, encoding, unicode::width::DisplayWidth, Position};
 use helix_lsp::lsp::DiagnosticSeverity;
 use helix_view::document::DEFAULT_LANGUAGE_NAME;
 use helix_view::{

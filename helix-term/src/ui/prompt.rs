@@ -13,7 +13,7 @@ use tui::widgets::{Block, Widget};
 
 use helix_core::{
     unicode::segmentation::{GraphemeCursor, UnicodeSegmentation},
-    unicode::width::UnicodeWidthStr,
+    unicode::width::DisplayWidth,
     Position,
 };
 use helix_view::{

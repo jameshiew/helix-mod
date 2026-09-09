@@ -32,6 +32,57 @@ async fn prompt_reset_anchor() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn prompt_unicode_width_matches_rendered_cells() -> anyhow::Result<()> {
+    use helix_core::Position;
+    use helix_term::{
+        compositor::{Component, Context},
+        job::Jobs,
+        ui::Prompt,
+    };
+    use helix_view::graphics::Rect;
+    use tui::buffer::Buffer;
+
+    let mut app = AppBuilder::new().build()?;
+    let mut jobs = Jobs::new();
+    let area = Rect::new(0, 0, 12, 2);
+    for text in ["لا", "א\u{200d}ל", "ꓹꓼ", "1️⃣", "🤦🏼‍♂️"] {
+        let mut prompt = Prompt::new(":".into(), None, |_, _| Vec::new(), |_, _, _| {})
+            .with_line(format!("{text}x"), &app.editor);
+        let mut buffer = Buffer::empty(area);
+        prompt.render_prompt(
+            area,
+            &mut buffer,
+            &mut Context {
+                editor: &mut app.editor,
+                scroll: None,
+                jobs: &mut jobs,
+            },
+        );
+        assert_eq!(
+            prompt.cursor(area, &app.editor).0,
+            Some(Position::new(1, 4)),
+            "{text:?}"
+        );
+        assert_eq!(buffer[(3, 1)].symbol.as_str(), "x");
+
+        prompt.set_line(format!("{}x", text.repeat(8)), &app.editor);
+        prompt.render_prompt(
+            area,
+            &mut buffer,
+            &mut Context {
+                editor: &mut app.editor,
+                scroll: None,
+                jobs: &mut jobs,
+            },
+        );
+        let cursor = prompt.cursor(area, &app.editor).0.unwrap();
+        assert!(cursor.col < area.width as usize);
+        assert_eq!(buffer[(cursor.col as u16 - 1, 1)].symbol.as_str(), "x");
+    }
+    Ok(())
+}
+
 async fn test_statusline(
     line: &str,
     expected_status: &str,

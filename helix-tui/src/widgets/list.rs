@@ -6,7 +6,7 @@ use crate::{
     widgets::{Block, StatefulWidget, Widget},
 };
 use std::iter::{self, Iterator};
-use unicode_width::UnicodeWidthStr;
+use helix_core::unicode::width::DisplayWidth;
 
 #[derive(Debug, Clone)]
 pub struct ListState {

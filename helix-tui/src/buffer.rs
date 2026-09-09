@@ -1,6 +1,6 @@
 //! Contents of a terminal screen. A [Buffer] is made up of [Cell]s.
 use crate::text::{Span, Spans};
-use helix_core::unicode::width::{UnicodeWidthChar, UnicodeWidthStr};
+use helix_core::unicode::width::{DisplayWidth, UnicodeWidthChar};
 use helix_view::graphics::{Color, Modifier, Rect, Style, UnderlineStyle};
 use std::cmp::min;
 use unicode_segmentation::UnicodeSegmentation;
@@ -427,12 +427,14 @@ impl Buffer {
             return (x, y);
         }
 
+        let width = width.min((self.area.right() - x) as usize);
         let mut index = self.index_of(x, y);
         let mut rendered_width = 0;
         let mut graphemes = string.grapheme_indices(true);
 
         if truncate_start {
-            for _ in 0..graphemes.next().map(|(_, g)| g.width()).unwrap_or_default() {
+            let replaced_width = graphemes.next().map(|(_, g)| g.width()).unwrap_or_default();
+            for _ in 0..replaced_width.min(width) {
                 self.content[index].set_symbol("…");
                 index += 1;
                 rendered_width += 1;
@@ -441,6 +443,9 @@ impl Buffer {
 
         for (byte_offset, s) in graphemes {
             let grapheme_width = s.width();
+            if grapheme_width > width.saturating_sub(rendered_width) {
+                break;
+            }
             if truncate_end && rendered_width + grapheme_width >= width {
                 break;
             }
@@ -490,6 +495,7 @@ impl Buffer {
             return (x, y);
         }
 
+        let width = width.min((self.area.right() - x) as usize);
         let mut index = self.index_of(x, y);
         let mut x_offset = x as usize;
         let width = if ellipsis { width - 1 } else { width };
@@ -521,7 +527,7 @@ impl Buffer {
             }
         } else {
             let mut start_index = self.index_of(x, y);
-            let mut index = self.index_of(max_offset as u16, y);
+            let mut index = start_index + max_offset - x as usize;
 
             let content_width = string.width();
             let truncated = content_width > width;
@@ -537,10 +543,10 @@ impl Buffer {
                 if width == 0 {
                     continue;
                 }
-                let start = index - width;
-                if start < start_index {
+                if width > index.saturating_sub(start_index) {
                     break;
                 }
+                let start = index - width;
                 self.content[start].set_symbol(s);
                 self.content[start].set_style(style(byte_offset));
                 for cell in &mut self.content[start + 1..index] {
@@ -561,10 +567,11 @@ impl Buffer {
             return (x, y);
         }
 
+        let width = width.min(self.area.right() - x);
         let mut x_offset = x as usize;
         let max_offset = min(self.area.right(), width.saturating_add(x));
         let mut start_index = self.index_of(x, y);
-        let mut index = self.index_of(max_offset, y);
+        let mut index = start_index + (max_offset - x) as usize;
 
         let content_width = spans.width();
         let truncated = content_width > width as usize;
@@ -574,16 +581,16 @@ impl Buffer {
         } else {
             index -= width as usize - content_width;
         }
-        for span in spans.0.iter().rev() {
+        'spans: for span in spans.0.iter().rev() {
             for s in span.content.graphemes(true).rev() {
                 let width = s.width();
                 if width == 0 {
                     continue;
                 }
-                let start = index - width;
-                if start < start_index {
-                    break;
+                if width > index.saturating_sub(start_index) {
+                    break 'spans;
                 }
+                let start = index - width;
                 self.content[start].set_symbol(s);
                 self.content[start].set_style(span.style);
                 for cell in &mut self.content[start + 1..index] {
@@ -762,7 +769,7 @@ impl Buffer {
             }
 
             let current_width = current.width();
-            to_skip = current_width.saturating_sub(1);
+            to_skip = current_width.max(to_skip).saturating_sub(1);
 
             let affected_width = std::cmp::max(current_width, previous.width());
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);

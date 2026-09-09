@@ -1457,7 +1457,7 @@ fn compute_inlay_hints_for_view(
                 if let Some(limit) = inlay_hints_length_limit {
                     // Limit on displayed width
                     use helix_core::unicode::{
-                        segmentation::UnicodeSegmentation, width::UnicodeWidthStr,
+                        segmentation::UnicodeSegmentation, width::DisplayWidth,
                     };
 
                     let width = label.width();

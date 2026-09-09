@@ -110,6 +110,88 @@ fn softwrap_multichar_grapheme() {
     )
 }
 
+#[test]
+fn unicode_width_document_positions() {
+    for emoji in ["🤦🏼‍♂️", "👨‍👩‍👧‍👦", "1️⃣", "🇬🇧"] {
+        for newline in ["\n", "\r\n"] {
+            let text = format!("{emoji}\tx{newline}لا");
+            let format = TextFormat::new_test(false);
+            let annotations = TextAnnotations::default();
+            let rope = crate::Rope::from_str(&text);
+            for column in [0, 1] {
+                assert_eq!(
+                    crate::char_idx_at_visual_offset(
+                        rope.slice(..),
+                        0,
+                        0,
+                        column,
+                        &format,
+                        &annotations
+                    ),
+                    (0, 0)
+                );
+            }
+            assert_eq!(
+                crate::char_idx_at_visual_offset(rope.slice(..), 0, 0, 2, &format, &annotations),
+                (emoji.chars().count(), 0)
+            );
+            assert_eq!(
+                crate::visual_offset_from_block(
+                    rope.slice(..),
+                    0,
+                    emoji.chars().count(),
+                    &format,
+                    &annotations
+                )
+                .0,
+                crate::Position::new(0, 2)
+            );
+            let positions: Vec<_> = DocumentFormatter::new_at_prev_checkpoint(
+                text.as_str().into(),
+                &format,
+                &annotations,
+                0,
+            )
+            .map(|g| (g.visual_pos.row, g.visual_pos.col, g.width()))
+            .collect();
+            assert_eq!(
+                positions,
+                [
+                    (0, 0, 2),
+                    (0, 2, 2),
+                    (0, 4, 1),
+                    (0, 5, 1),
+                    (1, 0, 1),
+                    (1, 1, 1),
+                    (1, 2, 1)
+                ],
+                "{text:?}"
+            );
+        }
+        let text = format!("a{emoji}bX");
+        let format = TextFormat {
+            viewport_width: 4,
+            max_wrap: 0,
+            wrap_indicator: "".into(),
+            ..TextFormat::new_test(true)
+        };
+        let annotations = TextAnnotations::default();
+        let positions: Vec<_> = DocumentFormatter::new_at_prev_checkpoint(
+            text.as_str().into(),
+            &format,
+            &annotations,
+            0,
+        )
+        .map(|g| (g.visual_pos.row, g.visual_pos.col, g.width()))
+        .collect();
+        assert_eq!(
+            positions,
+            [(0, 0, 1), (0, 1, 2), (0, 3, 1), (1, 0, 1), (1, 1, 1)],
+            "{text:?}"
+        );
+    }
+}
+
 fn softwrap_text_at_text_width(text: &str) -> String {
     let mut text_fmt = TextFormat::new_test(true);
     text_fmt.soft_wrap_at_text_width = true;
