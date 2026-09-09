@@ -29,6 +29,12 @@ pub fn request_redraw() {
     REDRAW_NOTIFY.notify_one();
 }
 
+/// Creates a redraw callback that can run outside the current runtime.
+pub fn request_redraw_callback() -> impl Fn() + Send + Sync + 'static {
+    let notify = &*REDRAW_NOTIFY;
+    move || notify.notify_one()
+}
+
 /// Returns a future that will yield once a redraw has been asynchronously
 /// requested using [`request_redraw`].
 pub fn redraw_requested() -> impl Future<Output = ()> {
@@ -58,5 +64,43 @@ pub struct RequestRedrawOnDrop;
 impl Drop for RequestRedrawOnDrop {
     fn drop(&mut self) {
         request_redraw();
+    }
+}
+
+#[cfg(all(test, feature = "integration_test"))]
+mod tests {
+    use super::*;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn redraw_callback_targets_original_runtime_from_another_thread() {
+        let first = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let second = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let callback = {
+            let _guard = first.enter();
+            request_redraw_callback()
+        };
+
+        std::thread::spawn(callback).join().unwrap();
+
+        let mut context = Context::from_waker(Waker::noop());
+        {
+            let _guard = second.enter();
+            assert_eq!(
+                std::pin::pin!(redraw_requested()).poll(&mut context),
+                Poll::Pending
+            );
+        }
+        {
+            let _guard = first.enter();
+            assert_eq!(
+                std::pin::pin!(redraw_requested()).poll(&mut context),
+                Poll::Ready(())
+            );
+        }
     }
 }

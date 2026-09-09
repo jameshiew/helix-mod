@@ -2535,8 +2535,8 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn changeset_to_changes_ignore_line_endings() {
+    #[tokio::test]
+    async fn changeset_to_changes_ignore_line_endings() {
         use helix_lsp::{lsp, Client, OffsetEncoding};
         let text = Rope::from("hello\r\nworld");
         let mut doc = Document::from(
@@ -2574,8 +2574,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn changeset_to_changes() {
+    #[tokio::test]
+    async fn changeset_to_changes() {
         use helix_lsp::{lsp, Client, OffsetEncoding};
         let text = Rope::from("hello");
         let mut doc = Document::from(
