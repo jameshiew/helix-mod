@@ -132,6 +132,7 @@ where
     match element_id {
         helix_view::editor::StatusLineElement::Mode => render_mode,
         helix_view::editor::StatusLineElement::Spinner => render_lsp_spinner,
+        helix_view::editor::StatusLineElement::LanguageServers => render_language_servers,
         helix_view::editor::StatusLineElement::FileBaseName => render_file_base_name,
         helix_view::editor::StatusLineElement::FileName => render_file_name,
         helix_view::editor::StatusLineElement::FileAbsolutePath => render_file_absolute_path,
@@ -210,6 +211,40 @@ where
             .unwrap_or(" ")
             .into(),
     );
+}
+
+fn render_language_servers<'a, F>(context: &mut RenderContext<'a>, write: F)
+where
+    F: Fn(&mut RenderContext<'a>, Span<'a>) + Copy,
+{
+    let Some(language) = context.doc.language_config() else {
+        return;
+    };
+    if language.language_servers.is_empty() {
+        return;
+    }
+    if !context.editor.config().lsp.enable {
+        write(context, " LSP disabled ".into());
+        return;
+    }
+
+    write(context, " LSP ".into());
+    for (index, server) in language.language_servers.iter().enumerate() {
+        if index > 0 {
+            write(context, ", ".into());
+        }
+        let client = context
+            .doc
+            .language_server_by_name(&server.name)
+            .and_then(|client| context.editor.language_server_by_id(client.id()));
+        let status = match client {
+            Some(client) if client.is_initialized() => "running",
+            Some(_) => "starting",
+            None => "stopped",
+        };
+        write(context, format!("{}:{status}", server.name).into());
+    }
+    write(context, " ".into());
 }
 
 fn render_diagnostics<'a, F>(context: &mut RenderContext<'a>, write: F)

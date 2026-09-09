@@ -1952,6 +1952,10 @@ impl Document {
         })
     }
 
+    pub fn language_server_by_name(&self, name: &str) -> Option<&Client> {
+        self.language_servers.get(name).map(AsRef::as_ref)
+    }
+
     pub fn remove_language_server_by_name(&mut self, name: &str) -> Option<Arc<Client>> {
         self.language_servers.remove(name)
     }

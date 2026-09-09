@@ -695,6 +695,7 @@ impl Default for StatusLineConfig {
                 E::FileName,
                 E::ReadOnlyIndicator,
                 E::FileModificationIndicator,
+                E::LanguageServers,
             ],
             center: vec![],
             right: vec![
@@ -738,6 +739,8 @@ pub enum StatusLineElement {
 
     /// The LSP activity spinner
     Spinner,
+
+    LanguageServers,
 
     /// The file basename (the leaf of the open file's path)
     FileBaseName,
