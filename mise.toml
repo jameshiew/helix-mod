@@ -1,3 +1,7 @@
 [tools]
 just = "1.58.0"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.143"
+rust = { version = "nightly-2026-08-27", components = ["rustfmt", "rust-src", "clippy", "rust-analyzer"] }
+
+[env]
+RUST_BACKTRACE = "1"

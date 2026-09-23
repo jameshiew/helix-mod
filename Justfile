@@ -1,3 +1,5 @@
+set shell := ["mise", "exec", "--", "sh", "-cu"]
+
 test:
     cargo nextest run --workspace --all-features
 
